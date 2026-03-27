@@ -1,0 +1,8 @@
+biopython
+langchain
+langchain-community
+langchain-ollama
+langchain-huggingface
+langchain-text-splitters
+chromadb
+sentence-transformers

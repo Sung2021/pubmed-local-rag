@@ -1,0 +1,8 @@
+chroma_db/
+.env
+__pycache__/
+*.pyc
+*.log
+*.code-workspace
+.DS_Store
+benchmark_results.csv
