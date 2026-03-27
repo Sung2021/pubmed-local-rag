@@ -3,11 +3,14 @@ from langchain_community.vectorstores import Chroma
 from langchain_ollama import OllamaLLM
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import RunnablePassthrough
+from langchain_core.runnables import RunnablePassthrough, RunnableLambda
 
 import os
 import logging
 import time
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logging.basicConfig(
     filename="ask.log",
@@ -36,21 +39,45 @@ except Exception as e:
     exit(1)
 
 llm = OllamaLLM(model="llama3.2")
-retriever = vectorstore.as_retriever()
+retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
 
 prompt = PromptTemplate.from_template(
-    "Use the following context to answer the question.\n\nContext: {context}\n\nQuestion: {question}\n\nAnswer:"
+    "You are a biomedical research assistant. Use ONLY the provided context to answer the question.\n"
+    "If the context does not contain enough information to answer, say 'I don't have enough information in the retrieved abstracts to answer this question.'\n"
+    "Do not use prior knowledge outside the context.\n\n"
+    "Context:\n{context}\n\n"
+    "Question: {question}\n\n"
+    "Answer:"
 )
 
-def format_docs(docs):
+retrieved_docs = []
+
+def format_docs_and_store(docs):
+    global retrieved_docs
+    retrieved_docs = docs
     return "\n\n".join(doc.page_content for doc in docs)
 
 chain = (
-    {"context": retriever | format_docs, "question": RunnablePassthrough()}
+    {"context": retriever | format_docs_and_store, "question": RunnablePassthrough()}
     | prompt
     | llm
     | StrOutputParser()
 )
+
+def print_sources(docs):
+    seen = set()
+    sources = []
+    for doc in docs:
+        pmid = doc.metadata.get("pmid", "")
+        if pmid and pmid not in seen:
+            seen.add(pmid)
+            title   = doc.metadata.get("title", "No title")[:70]
+            year    = doc.metadata.get("year", "")
+            url     = doc.metadata.get("url", "")
+            sources.append(f"  - [{pmid}] {title} ({year})\n    {url}")
+    if sources:
+        print("\nSources:")
+        print("\n".join(sources))
 
 while True:
     query = input("\nEnter your question (quit: q): ").strip()
@@ -68,5 +95,7 @@ while True:
         continue
     elapsed = time.time() - start
     print(f"\nAnswer: {response}")
-    print(f"[{elapsed:.1f}s]")
+    print_sources(retrieved_docs)
+    print(f"\n[{elapsed:.1f}s]")
     logging.info(f"Response time: {elapsed:.1f}s")
+
