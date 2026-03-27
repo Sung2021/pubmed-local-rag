@@ -3,7 +3,7 @@ from langchain_community.vectorstores import Chroma
 from langchain_ollama import OllamaLLM
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import RunnablePassthrough, RunnableLambda
+from langchain_core.runnables import RunnablePassthrough, RunnableParallel, RunnableLambda
 
 import os
 import logging
@@ -50,18 +50,27 @@ prompt = PromptTemplate.from_template(
     "Answer:"
 )
 
-retrieved_docs = []
+# Step 1: retrieve docs and pass question through in parallel
+retrieval_step = RunnableParallel(
+    docs=retriever,
+    question=RunnablePassthrough()
+)
 
-def format_docs_and_store(docs):
-    global retrieved_docs
-    retrieved_docs = docs
-    return "\n\n".join(doc.page_content for doc in docs)
-
-chain = (
-    {"context": retriever | format_docs_and_store, "question": RunnablePassthrough()}
+# Step 2: build answer from retrieved docs (no side effects, no global state)
+answer_chain = (
+    RunnableLambda(lambda x: {
+        "context": "\n\n".join(doc.page_content for doc in x["docs"]),
+        "question": x["question"],
+    })
     | prompt
     | llm
     | StrOutputParser()
+)
+
+# Full chain returns {"answer": str, "sources": list[Document]}
+chain = retrieval_step | RunnableParallel(
+    answer=answer_chain,
+    sources=RunnableLambda(lambda x: x["docs"]),
 )
 
 def print_sources(docs):
@@ -71,9 +80,9 @@ def print_sources(docs):
         pmid = doc.metadata.get("pmid", "")
         if pmid and pmid not in seen:
             seen.add(pmid)
-            title   = doc.metadata.get("title", "No title")[:70]
-            year    = doc.metadata.get("year", "")
-            url     = doc.metadata.get("url", "")
+            title = doc.metadata.get("title", "No title")[:70]
+            year  = doc.metadata.get("year", "")
+            url   = doc.metadata.get("url", "")
             sources.append(f"  - [{pmid}] {title} ({year})\n    {url}")
     if sources:
         print("\nSources:")
@@ -88,14 +97,14 @@ while True:
     logging.info(f"Question: {query}")
     start = time.time()
     try:
-        response = chain.invoke(query)
+        result = chain.invoke(query)
     except Exception as e:
         print(f"Error: {e}")
         logging.error(f"Chain invoke failed: {e}")
         continue
     elapsed = time.time() - start
-    print(f"\nAnswer: {response}")
-    print_sources(retrieved_docs)
+    print(f"\nAnswer: {result['answer']}")
+    print_sources(result["sources"])
     print(f"\n[{elapsed:.1f}s]")
     logging.info(f"Response time: {elapsed:.1f}s")
 
